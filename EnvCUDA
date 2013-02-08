@@ -1,0 +1,134 @@
+#include <stdio.h>
+#include <cuda_runtime.h>
+#include <iostream>
+using std::cout;
+using std::endl;
+
+#include <fstream>
+using std::ifstream;
+
+#include <cstring>
+#include <time.h>
+#include <windows.h>
+
+#include <thrust/host_vector.h>
+#include <thrust/device_vector.h>
+#include <thrust/reduce.h>
+#include <thrust/functional.h>
+#include <thrust/transform.h>
+#include <thrust/scan.h>
+#include <cstdlib>
+
+const int MAX_CHARS_PO_LINIJA = 512;
+const int MAX_TOKENI_PO_LINIJA = 20;
+const char* const DELIMITER = " ";
+int m = 0; //Brojac na linii
+float vrednost[10000][10000]; //Obelezuvanje na input pole 
+
+struct arb_funct
+{
+    template <typename Tuple>
+    __host__ __device__
+    void operator()(Tuple t)
+    {
+        // d_R[i] = d_A[i] + d_B[i] + d_C[i] + d_D[i] + d_E[i];
+        thrust::get<5>(t) = thrust::get<0>(t) + thrust::get<1>(t) + thrust::get<2>(t)+ thrust::get<3>(t)+ thrust::get<4>(t);
+
+  	for (double y = 1; y < 1100000; y++); // Vestacko kasnenje 10ms - simulacija na presmetki
+							
+    }
+};
+
+
+// Glavna rutina na hostot
+ 
+int
+main(void)
+{
+  												
+  ifstream infile;
+  infile.open("METEO- BT1998.txt"); 				// otvora text file
+  if (!infile.good()) 
+    {
+		printf("Fajlot ne e najden!\n");
+		system("pause");
+		return 1;									// izlez ako fajlot ne e najden
+	}
+													// citaj sekoja linija od fajlot
+  while (!infile.eof())
+  {													// citaj cela linija vo memorija
+    char buf[MAX_CHARS_PO_LINIJA];
+    infile.getline(buf, MAX_CHARS_PO_LINIJA);
+    
+	// parsiranje na linijata vo prazni - delimitirani tokeni
+    int n = 0;// brojac na tokeni
+   	// array za zacuvuvanje na memoriskite adresi na tokenite vo buf
+    const char* token[MAX_TOKENI_PO_LINIJA] = {0};// na 0
+    
+  	// parsiranje na linijata
+    token[0] = strtok(buf, DELIMITER); // prv token
+    if (token[0]) // nula ako linijata e prazna
+    {
+      for (n = 1; n < MAX_TOKENI_PO_LINIJA; n++)
+      {
+        token[n] = strtok(0, DELIMITER);// sledni tokeni
+        if (!token[n]) break;// nema poveke tokeni
+      }
+    }
+   
+    // kreiranje na pole
+    for (int i = 0; i < n; i++) // n = broj na tokeni
+	{	
+		vrednost[m][i] = atof(token[i]);
+	}
+	
+	//Brojac na linii
+	m = m++; 
+  
+  }
+	 infile.close();
+	
+// Glavna rutina na device
+
+    // Alociranje memorija za host vektorite 
+    thrust::host_vector<float> A(m), B(m), C(m), D(m), E(m);
+
+    //Dava vrednosti vektorite
+    for (int i = 0; i < m; ++i)
+    {
+       A[i] = vrednost[i][4];
+       B[i] = vrednost[i][5];
+	   C[i] = vrednost[i][6];
+       D[i] = vrednost[i][7];
+	   E[i] = vrednost[i][8];
+	}
+	
+	// Alociranje memorija za device vektorite 
+	thrust::device_vector<float> d_A = A;
+	thrust::device_vector<float> d_B = B;
+	thrust::device_vector<float> d_C = C;
+	thrust::device_vector<float> d_D = D;
+	thrust::device_vector<float> d_E = E;
+	thrust::device_vector<float> d_R(m);
+	
+	//Pocetok na merenje na vremeto	
+	clock_t tStart = clock();							
+		
+	//Sumiranje na vektorite vo sumaren vektor so koristenje na thrust
+	thrust::for_each(thrust::make_zip_iterator(thrust::make_tuple(d_A.begin(), d_B.begin(), d_C.begin(), d_D.begin(), d_E.begin(), d_R.begin())),
+                     thrust::make_zip_iterator(thrust::make_tuple(d_A.end(),   d_B.end(),   d_C.end(),   d_D.end(),   d_E.end(),   d_R.end())),
+                     arb_funct());
+	
+	//Redukcija na sumarniot vektor
+	float suma = thrust::reduce(d_R.begin(), d_R.end(), 0.0f, thrust::plus<float>());
+	
+	//Prikaz na vremeto potrebno za izvrsuvanje na programata 
+	printf("Vreme na izvrsuvanje CUDA: %.5fs\n", (float)(clock() - tStart)/CLOCKS_PER_SEC);
+    	
+	//Prikaz na rezultatot
+	printf("Rezultatot e :  %0.2f\n",suma);
+	
+   	system("pause");
+    return 0;
+}
+
